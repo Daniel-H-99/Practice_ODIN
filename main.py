@@ -22,12 +22,16 @@ def main(args):
 
     You can change the hyperparameters as you want.
     """
+    if not os.path.isdir('./softmax_scores'):
+        os.mkdir('./softmax_scores')
+        
     epsilon = args.epsilon
     T = args.temperature
     out_dataset = args.out_dataset
-
+    if out_dataset == 'lsun':
+        epsilon *= 2
     # Load Pretrained densenet model (CIFAR100)
-    densenet = torch.load("./models/densenet100.pth")
+    densenet = torch.load("./models/densenet100.pth", map_location=torch.device('cpu'))
 
     ################DO NOT MODIFY##################
     #####YOU DON'T NEED TO UNDERSTAND THIS PART####
@@ -47,6 +51,7 @@ def main(args):
     g2 = open("./softmax_scores/confidence_Our_Out.txt", 'w')
 
     N = 10000
+    
     t0 = time.time()
 
     print("Processing in-distribution images")
@@ -55,16 +60,25 @@ def main(args):
 
 
         # TODO 1: calculate the max softmax score of baseline (no perturbation & no T scaling)
-
         # In order to use metric.py, pass the max_score(float) to below line
-        max_score: float  = None
+        input = data[0].requires_grad_()
+        output = densenet(input)
+        scores = nn.Softmax(dim=1)(output)
+        max_score = scores[0].max()
         f1.write("{}, {}, {}\n".format(T, epsilon, max_score))
-
+        
 
         # TODO 2: calculate the max softmax score of ODIN
         # Hint: torch.nn.autograd.Variable would be helpful
-
-        max_score: float  = None
+        scaled_output = output / T
+        target = scores.argmax(dim=1)
+        loss = nn.CrossEntropyLoss()(scaled_output, target)
+        loss.backward()
+        grad = input.grad.data.sign() / torch.Tensor([[[63.0/255.0]], [[62.1/255.0]], [[66.7/255.0]]])
+        perturbed_input = input - epsilon * grad
+        perturbed_output = densenet(perturbed_input) / T
+        perturbed_scores = nn.Softmax(dim=1)(perturbed_output)
+        max_score = perturbed_scores[0].max()
         g1.write("{}, {}, {}\n".format(T, epsilon, max_score))
 
         if idx  % 100 == 99:
@@ -73,7 +87,7 @@ def main(args):
 
         if idx == N - 1: break
 
-
+            
     t0 = time.time()
     print("Processing out-of-distribution images")
     ###Out-of-Distributions###
@@ -82,14 +96,25 @@ def main(args):
 
 
         # TODO 3: calculate the max softmax score of baseline (no perturbation & no T scaling)
-        max_score: float  = None
+        input = data[0].requires_grad_()
+        output = densenet(input)
+        scores = nn.Softmax(dim=1)(output)
+        max_score = scores[0].max()
         f2.write("{}, {}, {}\n".format(T, epsilon, max_score))
 
 
 
 
         # TODO 4: calculate the max softmax score of baseline (no perturbation & no T scaling)
-        max_score: float  = None
+        scaled_output = output / T
+        target = scores.argmax(dim=1)
+        loss = nn.CrossEntropyLoss()(scaled_output, target)
+        loss.backward()
+        grad = input.grad.data.sign() / torch.Tensor([[[63.0/255.0]], [[62.1/255.0]], [[66.7/255.0]]])
+        perturbed_input = input - epsilon * grad
+        perturbed_output = densenet(perturbed_input) / T
+        perturbed_scores = nn.Softmax(dim=1)(perturbed_output)
+        max_score = perturbed_scores[0].max()
         g2.write("{}, {}, {}\n".format(T,epsilon, max_score))
 
         if idx % 100 == 99:
@@ -103,7 +128,7 @@ def main(args):
 #########Funtion for torch version sync####
 def recursion_change_bn(module):
     if isinstance(module, torch.nn.BatchNorm2d):
-        module.track_running_stats = 1
+        module.track_running_stats = 1z
     else:
         for i, (name, module1) in enumerate(module._modules.items()):
             module1 = recursion_change_bn(module1)
